@@ -56,7 +56,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         // data['result'] is the actual leaderboard array
-        final result = data['result'];
+        final result = data['result'] ?? data['value'];
         setState(() {
           if (result is List) {
             _rankings = List<Map<String, dynamic>>.from(

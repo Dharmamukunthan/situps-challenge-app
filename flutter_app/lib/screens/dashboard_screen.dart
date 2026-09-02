@@ -253,11 +253,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        final result = data['result'];
-
+        final result = data['result'] ?? data['value'];
         if (result != null && result is String) {
           setState(() => _battleId = result);
           _fetchBattleAndStart(result);
+        } else if (result != null && result is Map && result['battleId'] != null) {
+          final battleId = result['battleId'] as String;
+          setState(() => _battleId = battleId);
+          _fetchBattleAndStart(battleId);
         } else {
           _pollForMatch();
         }
@@ -303,7 +306,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
         if (response.statusCode == 200) {
           final data = json.decode(response.body);
-          final result = data['result'];
+          final result = data['result'] ?? data['value'];
 
           if (result != null && result is Map && result['battleId'] != null) {
             timer.cancel();
@@ -329,7 +332,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        final battle = data['result'];
+        final battle = data['result'] ?? data['value'];
 
         if (battle != null && battle is Map) {
           final opponentName = battle['creatorId'] == widget.username
@@ -395,7 +398,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
         if (response.statusCode == 200) {
           final data = json.decode(response.body);
-          final battle = data['result'];
+          final battle = data['result'] ?? data['value'];
 
           if (battle != null && battle is Map && mounted) {
             setState(() {
@@ -486,6 +489,60 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _showSnackBar(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  // --- PRIVATE ROOM ---
+  void _showCreatePrivateRoom() async {
+    setState(() {
+      _isSearching = true;
+      _searchStatus = "Creating room...";
+    });
+
+    try {
+      final response = await http.post(
+        Uri.parse('https://graceful-mink-900.convex.site/api/mutation'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'path': 'battles:createBattle',
+          'args': {
+            'creatorId': widget.username,
+            'duration': _selectedDuration,
+          },
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final result = data['result'] ?? data['value'];
+
+        String? battleId;
+        String? code;
+
+        if (result is Map) {
+          battleId = result['id'] as String?;
+          code = result['code'] as String?;
+        } else if (result is String) {
+          battleId = result;
+        }
+
+        if (battleId != null) {
+          setState(() {
+            _battleId = battleId;
+            _searchStatus = code != null ? "Room code: $code" : "Room created! Waiting for opponent...";
+          });
+          _pollForMatch();
+        } else {
+          setState(() => _isSearching = false);
+          _showSnackBar("Failed to create room");
+        }
+      } else {
+        setState(() => _isSearching = false);
+        _showSnackBar("Failed to create room");
+      }
+    } catch (_) {
+      setState(() => _isSearching = false);
+      _showSnackBar("Network error");
+    }
   }
 
   @override
@@ -787,7 +844,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   title: "Private Room",
                   subtitle: "Create a room and invite friends with a code",
                   color: const Color(0xFF4CAF50),
-                  onTap: () => _showSnackBar("Private rooms coming soon!"),
+                  onTap: () =>        _showCreatePrivateRoom(),
                 ),
               ],
             ),
