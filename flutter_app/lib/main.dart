@@ -35,6 +35,10 @@ class _SitupChallengeAppState extends State<SitupChallengeApp> {
     await prefs.setBool('situp-dark-theme', _isDark);
   }
 
+  // App metadata
+  static const String _appVersion = '1.1.0';
+  static const String _appName = 'Situp Challenge';
+
   // Light theme colors
   static const Color _lightBg = Color(0xFFFDF5F0);
   static const Color _lightCard = Color(0xFFFFF0E8);

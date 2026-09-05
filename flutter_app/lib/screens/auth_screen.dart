@@ -216,11 +216,104 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
               ),
 
+              const SizedBox(height: 20),
+
+              // Divider
+              Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      height: 1,
+                      color: _subtext.withAlpha(30),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Text(
+                      "or",
+                      style: TextStyle(fontSize: 13, color: _subtext),
+                    ),
+                  ),
+                  Expanded(
+                    child: Container(
+                      height: 1,
+                      color: _subtext.withAlpha(30),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 16),
+
+              // Sign in with email option
+              GestureDetector(
+                onTap: _signInWithEmail,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: _card,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: _accent.withAlpha(40),
+                      width: 2,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.login,
+                        color: _accent,
+                        size: 22,
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Sign in",
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                color: _text,
+                              ),
+                            ),
+                            Text(
+                              "Sign in to claim your username",
+                              style: TextStyle(fontSize: 12, color: _subtext),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(
+                        Icons.arrow_forward,
+                        color: _accent,
+                        size: 20,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
               const SizedBox(height: 32),
             ],
           ),
         ),
       ),
     );
+  }
+
+  void _signInWithEmail() async {
+    setState(() => _isLoading = true);
+    // Navigate to email sign-in flow
+    // For now, this is a placeholder that will be connected to Convex Auth
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Email sign-in coming soon'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+    setState(() => _isLoading = false);
   }
 }
