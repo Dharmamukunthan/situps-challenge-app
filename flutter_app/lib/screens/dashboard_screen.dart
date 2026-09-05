@@ -40,6 +40,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Timer? _battleTimer;
   Timer? _pollTimer;
   String _searchStatus = "";
+  bool _showJoinRoom = false;
+  String _joinCode = "";
 
   // Camera state for battle
   CameraController? _cameraController;
@@ -319,6 +321,49 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
+  void _pollBattleForOpponent() {
+    _pollTimer?.cancel();
+    int attempts = 0;
+
+    _pollTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
+      attempts++;
+
+      if (mounted) {
+        setState(() {
+          _searchStatus = "Waiting for opponent... ($attempts)";
+        });
+      }
+
+      if (attempts > 90) {
+        timer.cancel();
+        if (mounted) setState(() => _isSearching = false);
+        _showSnackBar("No opponent joined. Try again.");
+        return;
+      }
+
+      try {
+        final response = await http.post(
+          Uri.parse('https://graceful-mink-900.convex.site/api/query'),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({
+            'path': 'battles:getBattle',
+            'args': {'battleId': _battleId!},
+          }),
+        );
+
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          final battle = data['result'] ?? data['value'];
+
+          if (battle != null && battle is Map && battle['opponentId'] != null && battle['opponentId'] != "") {
+            timer.cancel();
+            _startBattle(battle['opponentId'] ?? "Friend", battle['duration'] ?? _selectedDuration);
+          }
+        }
+      } catch (_) {}
+    });
+  }
+
   void _fetchBattleAndStart(String battleId) async {
     try {
       final response = await http.post(
@@ -492,6 +537,59 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // --- PRIVATE ROOM ---
+  void _joinPrivateRoom() async {
+    if (_joinCode.isEmpty || _joinCode.length < 6) {
+      _showSnackBar("Enter a 6-character code");
+      return;
+    }
+
+    setState(() {
+      _isSearching = true;
+      _searchStatus = "Joining room $_joinCode...";
+    });
+
+    try {
+      final response = await http.post(
+        Uri.parse('https://graceful-mink-900.convex.site/api/mutation'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'path': 'battles:joinBattle',
+          'args': {
+            'battleCode': _joinCode,
+            'opponentId': widget.username,
+          },
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final result = data['result'] ?? data['value'];
+
+        if (result != null) {
+          final battleId = result is String ? result : (result as Map)['id'] as String?;
+          if (battleId != null) {
+            setState(() => _battleId = battleId);
+            _fetchBattleAndStart(battleId);
+            setState(() => _showJoinRoom = false);
+            return;
+          }
+        }
+      }
+
+      setState(() {
+        _isSearching = false;
+        _searchStatus = "";
+      });
+      _showSnackBar("Failed to join room. Check the code.");
+    } catch (_) {
+      setState(() {
+        _isSearching = false;
+        _searchStatus = "";
+      });
+      _showSnackBar("Network error");
+    }
+  }
+
   void _showCreatePrivateRoom() async {
     setState(() {
       _isSearching = true;
@@ -528,9 +626,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (battleId != null) {
           setState(() {
             _battleId = battleId;
-            _searchStatus = code != null ? "Room code: $code" : "Room created! Waiting for opponent...";
+            _searchStatus = code != null ? "Room code: $code (share with friend)" : "Room created! Waiting for opponent...";
           });
-          _pollForMatch();
+          _pollBattleForOpponent();
         } else {
           setState(() => _isSearching = false);
           _showSnackBar("Failed to create room");
@@ -847,6 +945,99 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   onTap: () =>        _showCreatePrivateRoom(),
                 ),
               ],
+            ),
+          ),
+
+          // Join Room section
+          if (_showJoinRoom)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: _card,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: _accent.withAlpha(20),
+                    blurRadius: 20,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.login, color: const Color(0xFF4CAF50), size: 20),
+                      const SizedBox(width: 10),
+                      Text("Join a Private Room",
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _text)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    decoration: InputDecoration(
+                      hintText: "Enter room code (e.g. ABCD12)",
+                      filled: true,
+                      fillColor: widget.isDark ? const Color(0xFF2D2D44) : Colors.white,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                    ),
+                    textCapitalization: TextCapitalization.characters,
+                    maxLength: 6,
+                    onChanged: (val) => _joinCode = val.toUpperCase(),
+                  ),
+                  const SizedBox(height: 12),
+                  if (_joinCode.length == 6)
+                    ElevatedButton(
+                      onPressed: _joinPrivateRoom,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF4CAF50),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      child: const Text("Join Room", style: TextStyle(fontWeight: FontWeight.bold)),
+                    )
+                  else
+                    Text(
+                      "Enter 6-character code",
+                      style: TextStyle(fontSize: 12, color: _subtext),
+                    ),
+                ],
+              ),
+            ),
+
+          // Hidden join mode toggle
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                _showJoinRoom = !_showJoinRoom;
+              });
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: _accent.withAlpha(20),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _showJoinRoom ? Icons.close : Icons.group_add,
+                    color: _accent,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _showJoinRoom ? "Hide Join" : "Join a friend's room",
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: _accent,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
