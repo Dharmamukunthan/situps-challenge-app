@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>App Icon Preview</title>
+<style>
+  body { background: #1a1a2e; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; font-family: system-ui; color: white; }
+  h1 { margin-bottom: 40px; }
+  .row { display: flex; gap: 40px; align-items: flex-end; flex-wrap: wrap; justify-content: center; }
+  .icon-wrap { text-align: center; }
+  .icon-wrap p { margin-top: 12px; font-size: 14px; opacity: 0.7; }
+  .icon { border-radius: 28%; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+</style>
+</head>
+<body>
+<h1>🏋️ Situp Challenge — App Icon Preview</h1>
+
+<div class="row">
+  <!-- App Icon 512px -->
+  <div class="icon-wrap">
+    <svg class="icon" width="256" height="256" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+      <!-- Cream background -->
+      <rect width="512" height="512" fill="#FDF5F0"/>
+      <!-- Coral circle -->
+      <circle cx="256" cy="256" r="220" fill="#E8734A"/>
+      <!-- Inner shadow ring -->
+      <circle cx="256" cy="256" r="220" fill="none" stroke="#D4623A" stroke-width="3" opacity="0.3"/>
+
+      <!-- Person doing situp -->
+      <!-- Head -->
+      <circle cx="200" cy="170" r="28" fill="white"/>
+      <!-- Neck -->
+      <rect x="193" y="196" width="14" height="14" rx="4" fill="white"/>
+
+      <!-- Torso (angled - sitting up) -->
+      <polygon points="200,210 280,180 285,198 205,228" fill="white" rx="8"/>
+
+      <!-- Front arm reaching toward knees -->
+      <polygon points="275,182 350,155 355,170 280,196" fill="white" rx="4"/>
+
+      <!-- Back arm -->
+      <polygon points="275,182 295,215 280,220 265,190" fill="white" rx="4"/>
+
+      <!-- Thigh (bent) -->
+      <polygon points="205,225 170,290 185,298 218,235" fill="white" rx="4"/>
+
+      <!-- Shin -->
+      <polygon points="170,290 140,365 158,370 185,298" fill="white" rx="4"/>
+
+      <!-- Foot -->
+      <ellipse cx="148" cy="372" rx="18" ry="8" fill="white"/>
+
+      <!-- Other leg -->
+      <polygon points="218,232 260,310 275,300 232,230" fill="white" rx="4"/>
+      <polygon points="260,310 280,375 295,368 275,300" fill="white" rx="4"/>
+      <ellipse cx="288" cy="378" rx="18" ry="8" fill="white"/>
+
+      <!-- Fire/flame accent -->
+      <path d="M360,370 C360,370 355,355 360,345 C365,355 370,348 367,338 C373,348 378,358 375,370 C373,375 362,375 360,370Z" fill="#FFC107"/>
+      <path d="M363,368 C363,368 361,360 363,355 C365,360 367,356 366,350 C370,356 372,362 370,368 C369,370 364,370 363,368Z" fill="#FF9800"/>
+    </svg>
+    <p>App Icon (512×512)</p>
+  </div>
+
+  <!-- Small icon -->
+  <div class="icon-wrap">
+    <svg class="icon" width="128" height="128" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+      <rect width="512" height="512" fill="#FDF5F0"/>
+      <circle cx="256" cy="256" r="220" fill="#E8734A"/>
+      <circle cx="200" cy="170" r="28" fill="white"/>
+      <rect x="193" y="196" width="14" height="14" rx="4" fill="white"/>
+      <polygon points="200,210 280,180 285,198 205,228" fill="white"/>
+      <polygon points="275,182 350,155 355,170 280,196" fill="white"/>
+      <polygon points="275,182 295,215 280,220 265,190" fill="white"/>
+      <polygon points="205,225 170,290 185,298 218,235" fill="white"/>
+      <polygon points="170,290 140,365 158,370 185,298" fill="white"/>
+      <ellipse cx="148" cy="372" rx="18" ry="8" fill="white"/>
+      <polygon points="218,232 260,310 275,300 232,230" fill="white"/>
+      <polygon points="260,310 280,375 295,368 275,300" fill="white"/>
+      <ellipse cx="288" cy="378" rx="18" ry="8" fill="white"/>
+      <path d="M360,370 C360,370 355,355 360,345 C365,355 370,348 367,338 C373,348 378,358 375,370 C373,375 362,375 360,370Z" fill="#FFC107"/>
+    </svg>
+    <p>Home Screen (128×128)</p>
+  </div>
+
+  <!-- Tiny icon -->
+  <div class="icon-wrap">
+    <svg class="icon" width="64" height="64" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+      <rect width="512" height="512" fill="#FDF5F0"/>
+      <circle cx="256" cy="256" r="220" fill="#E8734A"/>
+      <circle cx="200" cy="170" r="28" fill="white"/>
+      <polygon points="200,210 280,180 285,198 205,228" fill="white"/>
+      <polygon points="275,182 350,155 355,170 280,196" fill="white"/>
+      <polygon points="205,225 170,290 185,298 218,235" fill="white"/>
+      <polygon points="170,290 140,365 158,370 185,298" fill="white"/>
+      <polygon points="218,232 260,310 275,300 232,230" fill="white"/>
+      <polygon points="260,310 280,375 295,368 275,300" fill="white"/>
+      <path d="M360,370 C360,370 355,355 360,345 C365,355 370,348 367,338 C373,348 378,358 375,370 C373,375 362,375 360,370Z" fill="#FFC107"/>
+    </svg>
+    <p>Notification (64×64)</p>
+  </div>
+</div>
+
+<div style="margin-top: 60px; text-align: center;">
+  <h2>🎨 Color Palette</h2>
+  <div style="display: flex; gap: 20px; justify-content: center; margin-top: 20px;">
+    <div style="text-align: center;">
+      <div style="width: 60px; height: 60px; border-radius: 12px; background: #FDF5F0; border: 2px solid #333;"></div>
+      <p style="font-size: 12px; margin-top: 8px;">#FDF5F0<br/>Background</p>
+    </div>
+    <div style="text-align: center;">
+      <div style="width: 60px; height: 60px; border-radius: 12px; background: #E8734A;"></div>
+      <p style="font-size: 12px; margin-top: 8px;">#E8734A<br/>Coral</p>
+    </div>
+    <div style="text-align: center;">
+      <div style="width: 60px; height: 60px; border-radius: 12px; background: white; border: 2px solid #333;"></div>
+      <p style="font-size: 12px; margin-top: 8px;">#FFFFFF<br/>Person</p>
+    </div>
+    <div style="text-align: center;">
+      <div style="width: 60px; height: 60px; border-radius: 12px; background: #FFC107;"></div>
+      <p style="font-size: 12px; margin-top: 8px;">#FFC107<br/>Flame</p>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 40px; padding: 20px; background: rgba(255,255,255,0.05); border-radius: 16px; max-width: 400px;">
+  <p style="font-size: 14px; opacity: 0.7; text-align: center;">
+    This is how the icon will appear on your phone.<br/>
+    Coral circle + white person doing situps + flame accent.
+  </p>
+</div>
+</body>
+</html>
