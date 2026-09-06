@@ -113,7 +113,8 @@ class ConvexApi {
       throw ConvexApiException(
           'Wrong or expired code — check your email and try again');
     }
-    // userId is embedded in the JWT — decode the payload segment.
+    // userId is embedded in the JWT's standard `sub` claim as "userId|sessionId"
+    // (see @convex-dev/auth TOKEN_SUB_CLAIM_DIVIDER).
     String? userId;
     try {
       final token = tokens['token'] as String;
@@ -121,22 +122,16 @@ class ConvexApi {
       final normalized = base64Url.normalize(payload.replaceAll('-', '+'));
       final decoded = utf8.decode(base64Url.decode(normalized));
       final Map<String, dynamic> claims = json.decode(decoded);
-      userId = claims['identity'] as String?;
+      final sub = claims['sub'] as String?;
+      if (sub != null && sub.isNotEmpty) {
+        userId = sub.split('|').first;
+      }
     } catch (_) {}
     if (userId == null) {
       throw ConvexApiException('Signed in but could not load your account');
     }
     return {'token': tokens['token'], 'userId': userId};
   }
-
-  /// Look up an account profile by username (identity resolution for battles).
-  static Future<Map<String, dynamic>?> getProfile(String username) async {
-    final value = await call(
-        'query', 'username:getProfileByUsername', {'username': username});
-    if (value == null) return null;
-    return Map<String, dynamic>.from(value as Map);
-  }
-}
 
 class ConvexApiException implements Exception {
   final String message;
@@ -145,7 +140,3 @@ class ConvexApiException implements Exception {
   @override
   String toString() => message;
 }
-
-/// Builds the QR image widget data for a private room code.
-/// Kept here so screens stay focused on UI.
-String roomQrPayload(String code) => 'SITUP-ROOM:$code';

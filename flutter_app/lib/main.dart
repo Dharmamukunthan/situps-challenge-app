@@ -18,6 +18,24 @@ class SitupChallengeApp extends StatefulWidget {
 class _SitupChallengeAppState extends State<SitupChallengeApp> {
   bool _isDark = false;
 
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+  }
+
+  void _loadTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() => _isDark = prefs.getBool('situp-dark-theme') ?? false);
+  }
+
+  void toggleTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() => _isDark = !_isDark);
+    await prefs.setBool('situp-dark-theme', _isDark);
+  }
+
   // Light theme colors
   static const Color _lightBg = Color(0xFFFDF5F0);
   static const Color _lightCard = Color(0xFFFFF0E8);
@@ -29,23 +47,6 @@ class _SitupChallengeAppState extends State<SitupChallengeApp> {
   static const Color _darkCard = Color(0xFF252540);
   static const Color _darkText = Color(0xFFF5F5F5);
   static const Color _darkSubtext = Color(0xFF9CA3AF);
-
-  @override
-  void initState() {
-    super.initState();
-    _loadTheme();
-  }
-
-  void _loadTheme() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() => _isDark = prefs.getBool('situp-dark-theme') ?? false);
-  }
-
-  void toggleTheme() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() => _isDark = !_isDark);
-    await prefs.setBool('situp-dark-theme', _isDark);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -81,7 +82,7 @@ class _SitupChallengeAppState extends State<SitupChallengeApp> {
         ),
       ),
       themeMode: _isDark ? ThemeMode.dark : ThemeMode.light,
-      home: AuthWrapper(
+      home: AuthGate(
         isDark: _isDark,
         onToggleTheme: toggleTheme,
       ),
@@ -89,103 +90,104 @@ class _SitupChallengeAppState extends State<SitupChallengeApp> {
   }
 }
 
-class AuthWrapper extends StatefulWidget {
+/// Decides between the auth screen and the dashboard based on the saved session.
+class AuthGate extends StatefulWidget {
   final bool isDark;
   final VoidCallback onToggleTheme;
 
-  const AuthWrapper({
+  const AuthGate({
     super.key,
     required this.isDark,
     required this.onToggleTheme,
   });
 
   @override
-  State<AuthWrapper> createState() => _AuthWrapperState();
+  State<AuthGate> createState() => _AuthGateState();
 }
 
-class _AuthWrapperState extends State<AuthWrapper> {
+class _AuthGateState extends State<AuthGate> {
   bool _checking = true;
-  bool _isLoggedIn = false;
-  String _username = '';
-  String _userId = '';
-  bool _isSignedIn = false;
+  AuthResult? _session;
 
   @override
   void initState() {
     super.initState();
-    _checkAuth();
+    _loadSession();
   }
 
-  void _checkAuth() async {
+  Future<void> _loadSession() async {
     final prefs = await SharedPreferences.getInstance();
     final username = prefs.getString('situp-username');
-    final userId = prefs.getString('situp-user-id') ?? '';
+    final userId = prefs.getString('situp-user-id');
     final signedIn = prefs.getBool('situp-signed-in') ?? false;
+
+    if (!mounted) return;
     setState(() {
-      _isLoggedIn = username != null && username.isNotEmpty && userId.isNotEmpty;
-      _username = username ?? '';
-      _userId = userId;
-      _isSignedIn = signedIn;
       _checking = false;
+      if (username != null && username.isNotEmpty && userId != null && userId.isNotEmpty) {
+        _session = AuthResult(
+          username: username,
+          userId: userId,
+          isSignedIn: signedIn,
+        );
+      }
     });
   }
 
-  void _handleAuth(AuthResult result) {
-    setState(() {
-      _isLoggedIn = true;
-      _username = result.username;
-      _userId = result.userId;
-      _isSignedIn = result.isSignedIn;
-    });
-  }
-
-  Future<void> _handleSignOut() async {
+  Future<void> _signOut() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('situp-username');
     await prefs.remove('situp-user-id');
-    await prefs.remove('situp-signed-in');
     await prefs.remove('situp-auth-token');
+    await prefs.remove('situp-signed-in');
     if (!mounted) return;
-    setState(() {
-      _isLoggedIn = false;
-      _username = '';
-      _userId = '';
-      _isSignedIn = false;
-    });
+    setState(() => _session = null);
   }
 
-  Future<void> _handleRename(String newUsername) async {
+  /// Persists a rename so it survives app restarts.
+  Future<void> _rename(String newUsername) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('situp-username', newUsername);
     if (!mounted) return;
-    setState(() => _username = newUsername);
+    setState(() => _session = AuthResult(
+          username: newUsername,
+          userId: _session!.userId,
+          isSignedIn: _session!.isSignedIn,
+        ));
   }
 
   @override
   Widget build(BuildContext context) {
     if (_checking) {
       return Scaffold(
-        backgroundColor: widget.isDark ? const Color(0xFF1A1A2E) : const Color(0xFFFDF5F0),
+        backgroundColor:
+            widget.isDark ? const Color(0xFF1A1A2E) : const Color(0xFFFDF5F0),
         body: const Center(
           child: CircularProgressIndicator(color: Color(0xFFE8734A)),
         ),
       );
     }
-    if (_isLoggedIn) {
+
+    final session = _session;
+    if (session != null) {
       return DashboardScreen(
-        username: _username,
-        userId: _userId,
-        isSignedIn: _isSignedIn,
+        key: ValueKey('dashboard-${session.username}'),
+        username: session.username,
+        userId: session.userId,
+        isSignedIn: session.isSignedIn,
         isDark: widget.isDark,
         onToggleTheme: widget.onToggleTheme,
-        onSignOut: _handleSignOut,
-        onRename: _handleRename,
+        onSignOut: _signOut,
+        onRename: _rename,
       );
     }
+
     return AuthScreen(
       isDark: widget.isDark,
       onToggleTheme: widget.onToggleTheme,
-      onAuth: _handleAuth,
+      onAuth: (result) {
+        setState(() => _session = result);
+      },
     );
   }
 }
