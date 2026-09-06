@@ -20,32 +20,29 @@ export const touchQueue = mutation({
     duration: v.number(),
   },
   handler: async (ctx, args) => {
-    // Remove leftover WAITING entries from previous searches.
-    // NEVER delete "matched" entries — the opponent's findMatch patches our
-    // entry to matched at the same moment our heartbeat may run, and deleting
-    // it here would strand the searcher while their opponent enters the battle.
-    const old = await ctx.db
-      .query("matchmaking")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const entry of old) {
-      if (entry.status === "waiting" && entry.duration !== args.duration) {
-        await ctx.db.delete(entry._id);
-      }
-    }
-
     const existing = await ctx.db
       .query("matchmaking")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .first();
 
+    // Already paired (the opponent's findMatch patched us) — NEVER insert a
+    // second waiting entry here. A ghost waiting entry would let another
+    // searcher pair with a player who is already in a battle.
+    if (existing && existing.status === "matched") return existing._id;
+
     if (existing && existing.status === "waiting") {
-      // Heartbeat: keep the same queue position, just refresh liveness
+      // Heartbeat: keep the same queue position, refresh liveness + duration
       await ctx.db.patch(existing._id, {
         createdAt: Date.now(),
         username: args.username,
+        duration: args.duration,
       });
       return existing._id;
+    }
+
+    // Leftover entry in any other state — clean it up before re-queuing
+    if (existing) {
+      await ctx.db.delete(existing._id);
     }
 
     const id = await ctx.db.insert("matchmaking", {
@@ -85,15 +82,34 @@ export const findMatch = mutation({
       }
     }
 
-    // Ensure my entry exists & is fresh (covers direct findMatch without touchQueue)
+    // My entry (if any)
     let mine = await ctx.db
       .query("matchmaking")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .first();
-    if (mine && mine.status !== "waiting") {
+
+    // Already paired by the OPPONENT's findMatch — report the SAME battle
+    // instead of creating a second one. Convex serializes mutations, so when
+    // two players call findMatch at nearly the same moment, the second caller
+    // sees the first caller's "matched" entry and reuses that battle. Without
+    // this check the second caller would strand themselves (their own entry is
+    // no longer "waiting") or create a duplicate battle.
+    if (mine && mine.status === "matched" && mine.battleId) {
+      const existingBattle = await ctx.db.get(mine.battleId as any);
+      if (existingBattle && (existingBattle as any).status !== "finished") {
+        return { battleId: mine.battleId };
+      }
+      // Stale match pointing at a finished battle — clear it and re-queue
       await ctx.db.delete(mine._id);
       mine = null;
     }
+
+    if (mine && mine.status === "waiting" && mine.duration !== args.duration) {
+      // Duration changed since the last search — re-queue in the right bucket
+      await ctx.db.delete(mine._id);
+      mine = null;
+    }
+
     if (!mine) {
       const id = await ctx.db.insert("matchmaking", {
         userId: args.userId,
@@ -115,11 +131,7 @@ export const findMatch = mutation({
       .order("asc")
       .first();
 
-    if (
-      opponent &&
-      opponent.userId !== args.userId &&
-      opponent.status === "waiting"
-    ) {
+    if (opponent && opponent.userId !== args.userId) {
       // Create the battle. startedAt is set HERE on the server — both players
       // derive their countdown from this exact timestamp, so the timer is
       // always identical regardless of when each player joined the queue.
@@ -182,7 +194,10 @@ export const getMyMatch = query({
   },
 });
 
-/** Leave matchmaking / a random battle entirely. */
+/** Leave matchmaking (cancel an active search only). NEVER touches "matched"
+ *  entries — deleting one while the OPPONENT is in prestart/active would yank
+ *  their getMyMatch → null and strand them on a search screen for a battle
+ *  that no longer exists. */
 export const cancelMatch = mutation({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
@@ -191,19 +206,33 @@ export const cancelMatch = mutation({
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .collect();
     for (const entry of entries) {
-      await ctx.db.delete(entry._id);
+      if (entry.status === "waiting") {
+        await ctx.db.delete(entry._id);
+      }
     }
   },
 });
 
-export const getMatchStatus = query({
-  args: { userId: v.string() },
+/** End-of-battle cleanup: a player calls this from the results screen to drop
+ *  their own matched entry. Only removes it once the battle is finished, so it
+ *  can never break a live match. */
+export const leaveBattleQueue = mutation({
+  args: { userId: v.string(), battleId: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const entry = await ctx.db
+    const entries = await ctx.db
       .query("matchmaking")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .first();
-    if (!entry) return null;
-    return { status: entry.status, battleId: entry.battleId };
+      .collect();
+    for (const entry of entries) {
+      if (entry.status !== "matched" || !entry.battleId) {
+        await ctx.db.delete(entry._id);
+        continue;
+      }
+      if (args.battleId && entry.battleId !== args.battleId) continue;
+      const battle = await ctx.db.get(entry.battleId as any);
+      if (!battle || (battle as any).status === "finished") {
+        await ctx.db.delete(entry._id);
+      }
+    }
   },
 });
