@@ -28,6 +28,20 @@ export const findMatch = mutation({
       await ctx.db.delete(entry._id);
     }
 
+    // STEP 1b: Purge stale queue entries (players who left the app while waiting)
+    const staleCutoff = Date.now() - 10 * 60 * 1000;
+    const stale = await ctx.db
+      .query("matchmaking")
+      .withIndex("by_status_duration", (q) =>
+        q.eq("status", "waiting").eq("duration", args.duration)
+      )
+      .collect();
+    for (const entry of stale) {
+      if (entry.createdAt < staleCutoff) {
+        await ctx.db.delete(entry._id);
+      }
+    }
+
     // STEP 2: Look for a DIFFERENT waiting player with the same duration
     const opponent = await ctx.db
       .query("matchmaking")
@@ -86,6 +100,8 @@ export const findMatch = mutation({
 });
 
 // Check if we've been matched (poll this every 2s)
+// Returns battleId, the SERVER-side duration and opponent name so both players
+// always play the same duration regardless of when they joined the queue.
 export const getMyMatch = query({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
@@ -96,7 +112,23 @@ export const getMyMatch = query({
 
     if (!entry) return null;
     if (entry.status === "matched" && entry.battleId) {
-      return { battleId: entry.battleId };
+      const battle = (await ctx.db.get(entry.battleId as any)) as any;
+      if (!battle) return null;
+      const isCreator = battle.creatorId === args.userId;
+      const opponentId = isCreator ? battle.opponentId : battle.creatorId;
+      let opponentName = "Opponent";
+      if (opponentId) {
+        const oppUser = await ctx.db.get(opponentId as any);
+        if (oppUser) {
+          const u = (oppUser as any).username || (oppUser as any).name;
+          if (u) opponentName = u;
+        }
+      }
+      return {
+        battleId: entry.battleId,
+        duration: battle.duration,
+        opponentName,
+      };
     }
     return null;
   },

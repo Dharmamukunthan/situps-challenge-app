@@ -30,6 +30,7 @@ const schema = defineSchema(
       isAnonymous: v.optional(v.boolean()), // is the user anonymous. do not remove
       role: v.optional(roleValidator), // role of the user. do not remove
       username: v.optional(v.string()),
+      usernameLocked: v.optional(v.boolean()), // true = one-time guest rename used up; false/absent = signed-in user, can rename anytime
     })
       .index("email", ["email"])
       .index("by_username", ["username"]),

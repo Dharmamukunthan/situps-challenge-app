@@ -36,9 +36,11 @@ export const joinBattle = mutation({
     opponentId: v.string(),
   },
   handler: async (ctx, args) => {
+    // Normalize the code so lowercase / spaced input still matches (fixes "not found")
+    const code = args.battleCode.trim().toUpperCase();
     const battle = await ctx.db
       .query("battles")
-      .withIndex("by_code", (q) => q.eq("battleCode", args.battleCode))
+      .withIndex("by_code", (q) => q.eq("battleCode", code))
       .first();
     if (!battle) throw new Error("Battle not found");
     if (battle.status !== "waiting") throw new Error("Battle already started");
@@ -63,12 +65,13 @@ export const updateScore = mutation({
   handler: async (ctx, args) => {
     const battle = await ctx.db.get(args.battleId);
     if (!battle) throw new Error("Battle not found");
-    if (battle.status !== "active") return;
+    if (battle.status === "finished") return;
 
     const now = Date.now();
+    // Small grace window so the losing-side's final sync isn't rejected at the buzzer
     const elapsed = battle.startedAt ? (now - battle.startedAt) / 1000 : 0;
 
-    if (elapsed >= battle.duration) {
+    if (elapsed >= battle.duration + 3) {
       await ctx.db.patch(args.battleId, {
         status: "finished",
         endedAt: now,
@@ -102,6 +105,35 @@ export const getBattle = query({
     return await ctx.db.get(args.battleId);
   },
 });
+
+// Battle with display names resolved (opponent name shown live in the app)
+export const getBattleDetailed = query({
+  args: { battleId: v.id("battles") },
+  handler: async (ctx, args) => {
+    const battle = await ctx.db.get(args.battleId);
+    if (!battle) return null;
+    const creatorName = await displayNameFor(ctx, battle.creatorId);
+    const opponentName = battle.opponentId
+      ? await displayNameFor(ctx, battle.opponentId)
+      : null;
+    return { ...battle, creatorName, opponentName };
+  },
+});
+
+// Resolve a display name for any user id (users table, then matchmaking, then raw id)
+async function displayNameFor(ctx: any, userId: string): Promise<string> {
+  const user = await ctx.db.get(userId as any);
+  if (user) {
+    const u = (user as any).username || (user as any).name;
+    if (u) return u;
+  }
+  const mm = await ctx.db
+    .query("matchmaking")
+    .withIndex("by_user", (q: any) => q.eq("userId", userId))
+    .first();
+  if (mm && mm.username) return mm.username;
+  return "Opponent";
+}
 
 export const getBattleByCode = query({
   args: { code: v.string() },
