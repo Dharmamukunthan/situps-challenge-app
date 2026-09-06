@@ -41,6 +41,7 @@ export function usePoseDetection(
   const confirmRef = useRef(0);
   const prevFrameRef = useRef<Uint8ClampedArray | null>(null);
   const bandMotionRef = useRef<number[]>(new Array(BAND_COUNT).fill(0));
+  const startingRef = useRef(false);
 
   // Start camera
   const startCamera = useCallback(async () => {
@@ -67,7 +68,12 @@ export function usePoseDetection(
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        try {
+          await videoRef.current.play();
+        } catch {
+          // Autoplay can reject until the element mounts / user gesture —
+          // the re-attach effect below retries once the element is live.
+        }
       }
       setError(null);
       setModelLoaded(true); // no model needed, just camera
@@ -86,8 +92,23 @@ export function usePoseDetection(
     streamRef.current = null;
     if (animRef.current) cancelAnimationFrame(animRef.current);
     prevFrameRef.current = null;
+    startingRef.current = false;
     setModelLoaded(false);
   }, []);
+
+  // Re-attach the stream when the <video> element remounts (battle phases
+  // prestart → active swap the JSX element). Without this the stream stays
+  // bound to the unmounted element and the battle camera shows black.
+  const lastVideoElRef = useRef<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || el === lastVideoElRef.current) return;
+    lastVideoElRef.current = el;
+    if (streamRef.current && el.srcObject !== streamRef.current) {
+      el.srcObject = streamRef.current;
+      el.play().catch(() => {});
+    }
+  });
 
   // Core motion detection
   const detectMotion = useCallback(() => {
@@ -292,7 +313,9 @@ export function usePoseDetection(
     }
   }, [videoRef, canvasRef]);
 
-  // Animation loop
+  // Animation loop. `enabled=false` fully stops the camera (privacy when the
+  // user taps the camera-off button); StrictMode double-mount is safe because
+  // stream acquisition is guarded by startingRef.
   useEffect(() => {
     if (!enabled) {
       stopCamera();
@@ -300,6 +323,7 @@ export function usePoseDetection(
     }
 
     let running = true;
+    let cancelled = false;
 
     const loop = () => {
       if (!running) return;
@@ -307,18 +331,33 @@ export function usePoseDetection(
       animRef.current = requestAnimationFrame(loop);
     };
 
-    const init = async () => {
-      await startCamera();
-      if (running) loop();
-    };
-
-    init();
+    (async () => {
+      if (!streamRef.current && !startingRef.current) {
+        startingRef.current = true;
+        try {
+          await startCamera();
+        } finally {
+          startingRef.current = false;
+        }
+      }
+      if (cancelled) return;
+      loop();
+    })();
 
     return () => {
+      cancelled = true;
       running = false;
-      stopCamera();
+      if (animRef.current) cancelAnimationFrame(animRef.current);
     };
   }, [enabled, startCamera, stopCamera, detectMotion]);
+
+  // Full teardown when the component unmounts entirely.
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    };
+  }, []);
 
   const resetCount = useCallback(() => {
     repCountRef.current = 0;

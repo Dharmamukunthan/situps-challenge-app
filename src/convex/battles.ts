@@ -2,12 +2,17 @@ import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { generateCode } from "./matchmaking";
 
+const VALID_DURATIONS = [30, 60, 300];
+
 export const createBattle = mutation({
   args: {
     creatorId: v.string(),
     duration: v.number(),
   },
   handler: async (ctx, args) => {
+    if (!VALID_DURATIONS.includes(args.duration)) {
+      throw new Error("Invalid duration");
+    }
     const code = generateCode();
     const id = await ctx.db.insert("battles", {
       creatorId: args.creatorId,
@@ -64,6 +69,12 @@ export const joinBattle = mutation({
   },
 });
 
+/** How long past the buzzer we still accept score syncs. The client's timer
+ *  can hit zero a beat before its final updateScore lands, and endBattle can
+ *  close the doc first — without this grace window the last reps would be
+ *  rejected and the two players would see different final scores. */
+const SCORE_GRACE_MS = 10_000;
+
 export const updateScore = mutation({
   args: {
     battleId: v.id("battles"),
@@ -73,21 +84,16 @@ export const updateScore = mutation({
   handler: async (ctx, args) => {
     const battle = await ctx.db.get(args.battleId);
     if (!battle) throw new Error("Battle not found");
-    if (battle.status === "finished") return;
+    if (battle.status === "waiting") return;
 
     const now = Date.now();
-    const elapsed = battle.startedAt ? (now - battle.startedAt) / 1000 : 0;
+    const startedAt = battle.startedAt ?? now;
+    const endedAt = battle.endedAt ?? startedAt + battle.duration * 1000;
+    const withinGrace = now - endedAt <= SCORE_GRACE_MS;
+    if (battle.status === "finished" && !withinGrace) return;
 
-    // Accept final syncs a few seconds past the buzzer so the losing side's
-    // last update isn't rejected; then auto-close.
-    if (battle.status === "active" && battle.startedAt && elapsed > battle.duration + 5) {
-      await ctx.db.patch(args.battleId, {
-        status: "finished",
-        endedAt: now,
-      });
-      return;
-    }
-
+    // Apply the incoming score FIRST so a final sync is never swallowed by
+    // the auto-close below.
     if (args.userId === battle.creatorId) {
       if (args.score > battle.creatorScore) {
         await ctx.db.patch(args.battleId, { creatorScore: args.score });
@@ -96,6 +102,16 @@ export const updateScore = mutation({
       if (args.score > battle.opponentScore) {
         await ctx.db.patch(args.battleId, { opponentScore: args.score });
       }
+    } else {
+      return;
+    }
+
+    // Auto-close once time is up.
+    if (battle.status === "active" && now >= startedAt + battle.duration * 1000) {
+      await ctx.db.patch(args.battleId, {
+        status: "finished",
+        endedAt: now,
+      });
     }
   },
 });

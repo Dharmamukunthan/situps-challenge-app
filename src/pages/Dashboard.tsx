@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useAuth } from "@/hooks/use-auth";
 import { useSearchParams, useNavigate } from "react-router";
@@ -48,6 +48,7 @@ export default function Dashboard() {
   const registerUsernameMutation = useMutation(api.username.registerUsername);
   const assignGuestNameMutation = useMutation(api.username.assignGuestName);
   const logSession = useMutation(api.situpLogs.logSession);
+  const registerGuest = useAction(api.auth.signIn);
 
   const [renameOpen, setRenameOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -106,46 +107,68 @@ export default function Dashboard() {
     [userId, logSession],
   );
 
-  // Save a pending username claimed on the auth page (retry until Convex confirms)
+  // Boot a guest identity in the background so the dashboard always has a
+  // unique username (user####) before anything else renders. Auto sign-in on
+  // mount is Convex Auth's official pattern for anonymous sign-in.
   useEffect(() => {
-    if (user && !user.username) {
-      const pending = localStorage.getItem("situp-pending-username");
-      if (pending) {
-        setUsernameMutation({ userId: user._id, username: pending })
-          .then(() => {
-            localStorage.removeItem("situp-pending-username");
-          })
-          .catch(() => {
-            // Retries on next render until it succeeds
-          });
-      }
+    if (isLoading || user) return;
+    registerGuest({ provider: "anonymous", params: {} }).catch(() => {});
+  }, [isLoading, user, registerGuest]);
+
+  // Save a pending username claimed on the auth page. The key carries a
+  // timestamp and is only honored while fresh, so a name chosen in a previous
+  // session can never leak onto a different account. Gives up after a few
+  // tries (name taken in the meantime) and falls back to auto-assign.
+  const pendingAttemptsRef = useRef(0);
+  useEffect(() => {
+    if (!user || user.username) return;
+    const pending = localStorage.getItem("situp-pending-username");
+    if (!pending) return;
+    const ts = Number(localStorage.getItem("situp-pending-ts") || 0);
+    const stale = !ts || Date.now() - ts > 120_000;
+    const exhausted = pendingAttemptsRef.current >= 5;
+    if (stale || exhausted) {
+      localStorage.removeItem("situp-pending-username");
+      localStorage.removeItem("situp-pending-ts");
+      pendingAttemptsRef.current = 0;
+      return;
     }
+    pendingAttemptsRef.current += 1;
+    setUsernameMutation({ userId: user._id, username: pending })
+      .then(() => {
+        localStorage.removeItem("situp-pending-username");
+        localStorage.removeItem("situp-pending-ts");
+      })
+      .catch(() => {
+        // Retries on the next user update until the cap above kicks in
+      });
   }, [user, setUsernameMutation]);
 
-  // Auto-assign a unique guest name (user####) to anyone without one
+  // Auto-assign a unique guest name (user####) to anyone without one.
+  // Skipped while a fresh pending username is being applied.
   useEffect(() => {
-    if (user && !user.username && !localStorage.getItem("situp-pending-username")) {
-      assignGuestNameMutation({ userId: user._id })
-        .then((name) => {
-          localStorage.setItem("situp-pending-username", name);
-        })
-        .catch(() => {});
+    if (
+      user &&
+      !user.username &&
+      !localStorage.getItem("situp-pending-username")
+    ) {
+      assignGuestNameMutation({ userId: user._id }).catch(() => {});
     }
   }, [user, assignGuestNameMutation]);
 
   // Display name: DB username → pending → name → Guest
   const displayName =
-    user?.username ||
-    localStorage.getItem("situp-pending-username") ||
-    user?.name ||
-    "Guest";
+    user?.username || user?.name || "Guest";
 
   const isGuest = user?.isAnonymous === true;
-  const username = user?.username || localStorage.getItem("situp-pending-username") || "";
+  const username = user?.username || "";
 
   const handleTabChange = (newTab: Tab) => {
     if (newTab === "battles" && !userId) {
-      navigate("/auth?returnTo=/dashboard");
+      // Carry an open battle invite (?battle=CODE) through the auth round-trip
+      const battle = searchParams.get("battle");
+      const returnTo = battle ? `/dashboard?battle=${battle}` : "/dashboard";
+      navigate(`/auth?returnTo=${encodeURIComponent(returnTo)}`);
       return;
     }
     setTab(newTab);
@@ -169,13 +192,7 @@ export default function Dashboard() {
         username: name,
         isSignedIn: !isGuest,
       });
-      // Keep localStorage in sync so the name shows instantly
-      localStorage.setItem("situp-pending-username", name);
-      if (user && !user.username) {
-        await setUsernameMutation({ userId: user._id, username: name }).catch(
-          () => {},
-        );
-      }
+      // The users-doc patch above is reactive — the header name updates live
       toast.success(`Username set to ${name}`);
       setRenameOpen(false);
     } catch (e) {
@@ -194,6 +211,16 @@ export default function Dashboard() {
   ];
 
   if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
+  // Booting a guest identity in the background — show a splash instead of
+  // flashing "Guest" and letting the user start a battle with a torn identity.
+  if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-pulse text-muted-foreground">Loading...</div>
@@ -235,16 +262,7 @@ export default function Dashboard() {
               <Moon className="w-4 h-4" />
             )}
           </Button>
-          {isAuthenticated ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="clay-button text-xs"
-              onClick={() => signOut()}
-            >
-              Sign Out
-            </Button>
-          ) : (
+          {isGuest ? (
             <Button
               size="sm"
               className="clay-btn text-xs"
@@ -253,12 +271,21 @@ export default function Dashboard() {
               <LogIn className="w-3.5 h-3.5 mr-1" />
               Sign In
             </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="clay-button text-xs"
+              onClick={() => signOut()}
+            >
+              Sign Out
+            </Button>
           )}
         </div>
       </header>
 
       {/* Guest rename hint */}
-      {isGuest && username && !renameOpen && (
+      {isGuest && !renameOpen && (
         <div className="px-4 pt-3">
           <div className="clay-card px-3 py-2 flex items-center justify-between gap-2">
             <p className="text-[11px] text-muted-foreground">

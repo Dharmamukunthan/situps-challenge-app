@@ -125,6 +125,7 @@ export function BattleSystem({
   const findMatch = useMutation(api.matchmaking.findMatch);
   const cancelMatch = useMutation(api.matchmaking.cancelMatch);
   const touchQueue = useMutation(api.matchmaking.touchQueue);
+  const leaveQueue = useMutation(api.matchmaking.leaveBattleQueue);
 
   // Live subscription: fires for both players while searching
   const myMatch = useQuery(
@@ -145,6 +146,33 @@ export function BattleSystem({
       setDuration(myMatch.duration);
     }
   }, [myMatch, phase, battleId]);
+
+  // Safety poll: re-runs pairing in case of any missed race, and recreates
+  // our queue entry if a stale-purge removed it mid-search.
+  useEffect(() => {
+    if (phase !== "searching") return;
+    const poll = setInterval(() => {
+      findMatch({ userId, username, duration })
+        .then((result) => {
+          if (result && !battleId) {
+            setBattleId(result.battleId);
+          }
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(poll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, userId, username, duration, battleId]);
+
+  // Duration authority is the SERVER battle doc — a joiner who selected a
+  // different duration in the lobby must adopt the room's duration so both
+  // players always see the same clock.
+  useEffect(() => {
+    if (battle && battleId && battle.duration !== duration) {
+      setDuration(battle.duration);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [battle?.duration, battleId]);
 
   // Queue heartbeat while searching — keeps the entry alive indefinitely
   useEffect(() => {
@@ -203,8 +231,18 @@ export function BattleSystem({
       const remaining = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
       setTimeLeft(remaining);
       if (remaining <= 0) {
+        // Flush the final score FIRST, then close — with the server's 10s
+        // grace window the last reps can never be rejected by the buzzer.
+        updateScore({
+          battleId: battleId as any,
+          userId,
+          score: myScoreRef.current,
+        })
+          .catch(() => {})
+          .finally(() => {
+            endBattle({ battleId: battleId as any }).catch(() => {});
+          });
         setPhase("finished");
-        endBattle({ battleId: battleId as any }).catch(() => {});
       }
     };
     tick();
@@ -223,27 +261,57 @@ export function BattleSystem({
     cameraEnabled,
   );
 
-  // Reset counters when a new battle session begins
+  // Reset counters when a new battle session begins (per-battle, not per-phase,
+  // so the prestart → active remount doesn't wipe the warmed-up counter state).
   useEffect(() => {
-    if (phase === "prestart") {
+    if (phase === "prestart" && battleId) {
       resetCount();
       setMyScore(0);
       setOpponentScore(0);
       myScoreRef.current = 0;
       setManualRep(0);
+      lastScoreUpdateRef.current = 0;
+      cleanupRef.current = 0;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
+  }, [battleId]);
 
-  // My live score = AI reps + manual reps
+  // My live score = AI reps + manual reps. Runs in "finished" too — if the
+  // opponent's endBattle closes the doc a beat before our timer hits zero,
+  // the last reps must still flow into the final flush below. Score is
+  // monotonically non-decreasing, so "apply first" on the server makes these
+  // syncs idempotent.
   useEffect(() => {
-    if (phase !== "active" && phase !== "prestart") return;
+    if (phase !== "active" && phase !== "prestart" && phase !== "finished")
+      return;
     const total = repCount + manualRep;
     setMyScore(total);
     myScoreRef.current = total;
   }, [repCount, manualRep, phase]);
 
-  // Push score to server (throttled) + final flush
+  // Final score flush — every change while finished (idempotent on server)
+  useEffect(() => {
+    if (phase === "finished" && battleId) {
+      updateScore({
+        battleId: battleId as any,
+        userId,
+        score: myScoreRef.current,
+      }).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, myScore, battleId]);
+
+  // Queue cleanup exactly once per battle (reset in resetAll / new battle)
+  const cleanupRef = useRef(0);
+  useEffect(() => {
+    if (phase === "finished" && battleId && cleanupRef.current !== 1) {
+      cleanupRef.current = 1;
+      leaveQueue({ userId, battleId }).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, battleId]);
+
+  // Push score to server (throttled)
   const lastScoreUpdateRef = useRef(0);
   useEffect(() => {
     if (phase === "active" && battleId) {
@@ -258,17 +326,6 @@ export function BattleSystem({
       }
     }
   }, [myScore, phase, battleId, userId, updateScore]);
-
-  useEffect(() => {
-    if (phase === "finished" && battleId) {
-      updateScore({
-        battleId: battleId as any,
-        userId,
-        score: myScoreRef.current,
-      }).catch(() => {});
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
 
   // Opponent score (live, reactive)
   useEffect(() => {
@@ -377,6 +434,11 @@ export function BattleSystem({
   );
 
   const resetAll = () => {
+    // Closing a private room on cancel so stale codes / QR scans fail cleanly
+    if (battleId) {
+      endBattle({ battleId: battleId as any }).catch(() => {});
+      leaveQueue({ userId, battleId }).catch(() => {});
+    }
     setMode(null);
     setPhase("lobby");
     setBattleId(null);
@@ -390,6 +452,7 @@ export function BattleSystem({
     setDuration(60);
     setTimeLeft(60);
     phaseKeyRef.current = "";
+    cleanupRef.current = 0;
     resetCount();
   };
 
@@ -561,12 +624,13 @@ export function BattleSystem({
               <input
                 type="text"
                 value={joinCode}
-                onChange={(e) =>
-                  setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))
-                }
+                onChange={(e) => setJoinCode(e.target.value)}
                 placeholder="53H7Z6"
                 maxLength={6}
-                className="flex-1 h-12 text-center text-base font-mono font-bold tracking-[0.3em] rounded-[var(--clay-radius)] bg-background border border-[var(--border)] px-3 focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+                className="flex-1 h-12 text-center text-base font-mono font-bold tracking-[0.3em] uppercase rounded-[var(--clay-radius)] bg-background border border-[var(--border)] px-3 focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
               />
               <Button
                 onClick={() => handleJoinWithCode(joinCode)}
@@ -638,13 +702,18 @@ export function BattleSystem({
 
           {battleUrl && (
             <>
-              <div className="clay-card p-4 inline-flex flex-col items-center">
-                <QRCodeSVG
-                  value={battleUrl}
-                  size={160}
-                  bgColor="transparent"
-                  fgColor="var(--foreground)"
-                />
+              <div className="clay-card p-3 inline-flex flex-col items-center">
+                {/* White tile so the QR stays scannable in both themes —
+                    CSS-variable fg colors don't rasterize in SVG */}
+                <div className="bg-white p-3 rounded-2xl">
+                  <QRCodeSVG
+                    value={battleUrl}
+                    size={160}
+                    bgColor="#ffffff"
+                    fgColor="#111827"
+                    level="M"
+                  />
+                </div>
                 <p className="text-[10px] text-muted-foreground mt-2 break-all max-w-[160px]">
                   {battleUrl}
                 </p>

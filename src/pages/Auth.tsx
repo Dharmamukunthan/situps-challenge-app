@@ -19,7 +19,7 @@ import logo from "@/assets/logo.svg";
 import { ArrowRight, Loader2, Mail, User, Check, X } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 interface AuthProps {
@@ -40,10 +40,16 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
   const { isLoading: authLoading, isAuthenticated, signIn } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const returnToParam = searchParams.get("returnTo");
   const redirect = resolveRedirectAfterAuth(
-    searchParams.get("returnTo"),
+    returnToParam,
     redirectAfterAuth,
   );
+  // A scanned invite (?returnTo=/dashboard?battle=CODE) must survive sign-in
+  const battleCode = useMemo(() => {
+    const m = returnToParam?.match(/battle=([A-Z0-9]{4,8})/i);
+    return m ? m[1].toUpperCase() : null;
+  }, [returnToParam]);
   const [step, setStep] = useState<"signIn" | { email: string }>("signIn");
   const [otp, setOtp] = useState("");
   const [usernameInput, setUsernameInput] = useState("");
@@ -64,6 +70,15 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       navigate(redirect);
     }
   }, [authLoading, isAuthenticated, navigate, redirect]);
+
+  // A pending username from a PREVIOUS session must not leak onto this new
+  // account — email sign-in is deliberate, so drop the stale claim.
+  useEffect(() => {
+    if (isAuthenticated) {
+      localStorage.removeItem("situp-pending-username");
+      localStorage.removeItem("situp-pending-ts");
+    }
+  }, [isAuthenticated]);
 
   const handleEmailSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -92,7 +107,11 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
     try {
       const formData = new FormData(event.currentTarget);
       await signIn("email-otp", formData);
-      navigate(redirect);
+      navigate(
+        battleCode
+          ? `/dashboard?battle=${battleCode}`
+          : redirect,
+      );
     } catch (error) {
       console.error("OTP verification error:", error);
       setError("The verification code you entered is incorrect.");
@@ -109,9 +128,15 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
     try {
       await signIn("anonymous");
       localStorage.setItem("situp-pending-username", name);
-      navigate(redirect);
+      localStorage.setItem("situp-pending-ts", String(Date.now()));
+      navigate(
+        battleCode
+          ? `/dashboard?battle=${battleCode}`
+          : redirect,
+      );
     } catch (error) {
       localStorage.removeItem("situp-pending-username");
+      localStorage.removeItem("situp-pending-ts");
       setError(
         `Failed to sign in: ${
           error instanceof Error ? error.message : "Unknown error"
