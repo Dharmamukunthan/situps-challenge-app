@@ -42,37 +42,50 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   Future<void> _loadRankings() async {
     setState(() => _isLoading = true);
     try {
-      // Use the correct Convex query path and args
-      final queryPath = _isToday ? 'situpLogs:getLeaderboard' : 'situpLogs:getOverallLeaderboard';
+      // Dedicated endpoint (also unwraps errors properly); falls back to the
+      // generic query path if the dedicated one is unavailable.
+      List<dynamic>? result;
+      try {
+        final response = await http
+            .post(
+              Uri.parse('https://graceful-mink-900.convex.site/api/leaderboard'),
+              headers: {'Content-Type': 'application/json'},
+              body: json.encode({'mode': _isToday ? 'today' : 'overall'}),
+            )
+            .timeout(const Duration(seconds: 15));
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          if (data['status'] == 'success') result = data['value'] as List<dynamic>?;
+        }
+      } catch (_) {}
 
-      final response = await http.post(
-        Uri.parse('https://graceful-mink-900.convex.site/api/query'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'path': queryPath,
-          'args': {},
-        }),
-      );
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        // data['result'] is the actual leaderboard array
-        final result = data['result'] ?? data['value'];
-        setState(() {
-          if (result is List) {
-            _rankings = List<Map<String, dynamic>>.from(
-              result.map((item) => Map<String, dynamic>.from(item)),
-            );
-          } else {
-            _rankings = [];
-          }
-          _isLoading = false;
-        });
-      } else {
-        setState(() { _isLoading = false; });
-      }
+      result ??= await _loadViaQuery();
+
+      setState(() {
+        _rankings = result!
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList();
+        _isLoading = false;
+      });
     } catch (e) {
       setState(() { _isLoading = false; });
     }
+  }
+
+  Future<List<dynamic>> _loadViaQuery() async {
+    final queryPath = _isToday ? 'situpLogs:getLeaderboard' : 'situpLogs:getOverallLeaderboard';
+    final response = await http.post(
+      Uri.parse('https://graceful-mink-900.convex.site/api/query'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'path': queryPath, 'args': {}}),
+    );
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final result = data['result'] ?? data['value'];
+      if (result is List) return result;
+    }
+    return [];
   }
 
   @override

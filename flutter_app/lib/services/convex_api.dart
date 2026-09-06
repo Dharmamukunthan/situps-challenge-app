@@ -64,6 +64,7 @@ class ConvexApi {
   // ---------------- AUTH: email OTP sign-in ----------------
 
   /// Step 1 — send the 6-digit code to the email.
+  /// A successful send does NOT return tokens — only a wrong request errors.
   static Future<void> sendEmailOtp(String email) async {
     final response = await http
         .post(
@@ -80,8 +81,8 @@ class ConvexApi {
         .timeout(const Duration(seconds: 15));
 
     final data = json.decode(response.body);
-    if (data['tokens'] == null) {
-      throw ConvexApiException(_friendly(data['errorMessage']?.toString()));
+    if (data['tokens'] == null && data['errorMessage'] != null) {
+      throw ConvexApiException(_friendly(data['errorMessage'].toString()));
     }
   }
 
@@ -112,7 +113,16 @@ class ConvexApi {
       throw ConvexApiException(
           'Wrong or expired code — check your email and try again');
     }
-    final userId = data['userInfo']?['userId'] ?? data['userId'];
+    // userId is embedded in the JWT — decode the payload segment.
+    String? userId;
+    try {
+      final token = tokens['token'] as String;
+      final payload = token.split('.')[1];
+      final normalized = base64Url.normalize(payload.replaceAll('-', '+'));
+      final decoded = utf8.decode(base64Url.decode(normalized));
+      final Map<String, dynamic> claims = json.decode(decoded);
+      userId = claims['identity'] as String?;
+    } catch (_) {}
     if (userId == null) {
       throw ConvexApiException('Signed in but could not load your account');
     }

@@ -18,6 +18,18 @@ class SitupChallengeApp extends StatefulWidget {
 class _SitupChallengeAppState extends State<SitupChallengeApp> {
   bool _isDark = false;
 
+  // Light theme colors
+  static const Color _lightBg = Color(0xFFFDF5F0);
+  static const Color _lightCard = Color(0xFFFFF0E8);
+  static const Color _lightText = Color(0xFF3D2C2C);
+  static const Color _lightSubtext = Color(0xFF9C8A8A);
+
+  // Dark theme colors
+  static const Color _darkBg = Color(0xFF1A1A2E);
+  static const Color _darkCard = Color(0xFF252540);
+  static const Color _darkText = Color(0xFFF5F5F5);
+  static const Color _darkSubtext = Color(0xFF9CA3AF);
+
   @override
   void initState() {
     super.initState();
@@ -34,22 +46,6 @@ class _SitupChallengeAppState extends State<SitupChallengeApp> {
     setState(() => _isDark = !_isDark);
     await prefs.setBool('situp-dark-theme', _isDark);
   }
-
-  // App metadata
-  static const String _appVersion = '1.1.0';
-  static const String _appName = 'Situp Challenge';
-
-  // Light theme colors
-  static const Color _lightBg = Color(0xFFFDF5F0);
-  static const Color _lightCard = Color(0xFFFFF0E8);
-  static const Color _lightText = Color(0xFF3D2C2C);
-  static const Color _lightSubtext = Color(0xFF9C8A8A);
-
-  // Dark theme colors
-  static const Color _darkBg = Color(0xFF1A1A2E);
-  static const Color _darkCard = Color(0xFF252540);
-  static const Color _darkText = Color(0xFFF5F5F5);
-  static const Color _darkSubtext = Color(0xFF9CA3AF);
 
   @override
   Widget build(BuildContext context) {
@@ -111,6 +107,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
   bool _checking = true;
   bool _isLoggedIn = false;
   String _username = '';
+  String _userId = '';
+  bool _isSignedIn = false;
 
   @override
   void initState() {
@@ -121,11 +119,46 @@ class _AuthWrapperState extends State<AuthWrapper> {
   void _checkAuth() async {
     final prefs = await SharedPreferences.getInstance();
     final username = prefs.getString('situp-username');
+    final userId = prefs.getString('situp-user-id') ?? '';
+    final signedIn = prefs.getBool('situp-signed-in') ?? false;
     setState(() {
-      _isLoggedIn = username != null && username.isNotEmpty;
+      _isLoggedIn = username != null && username.isNotEmpty && userId.isNotEmpty;
       _username = username ?? '';
+      _userId = userId;
+      _isSignedIn = signedIn;
       _checking = false;
     });
+  }
+
+  void _handleAuth(AuthResult result) {
+    setState(() {
+      _isLoggedIn = true;
+      _username = result.username;
+      _userId = result.userId;
+      _isSignedIn = result.isSignedIn;
+    });
+  }
+
+  Future<void> _handleSignOut() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('situp-username');
+    await prefs.remove('situp-user-id');
+    await prefs.remove('situp-signed-in');
+    await prefs.remove('situp-auth-token');
+    if (!mounted) return;
+    setState(() {
+      _isLoggedIn = false;
+      _username = '';
+      _userId = '';
+      _isSignedIn = false;
+    });
+  }
+
+  Future<void> _handleRename(String newUsername) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('situp-username', newUsername);
+    if (!mounted) return;
+    setState(() => _username = newUsername);
   }
 
   @override
@@ -141,27 +174,18 @@ class _AuthWrapperState extends State<AuthWrapper> {
     if (_isLoggedIn) {
       return DashboardScreen(
         username: _username,
+        userId: _userId,
+        isSignedIn: _isSignedIn,
         isDark: widget.isDark,
         onToggleTheme: widget.onToggleTheme,
-        onSignOut: () async {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.remove('situp-username');
-          setState(() {
-            _isLoggedIn = false;
-            _username = '';
-          });
-        },
+        onSignOut: _handleSignOut,
+        onRename: _handleRename,
       );
     }
     return AuthScreen(
       isDark: widget.isDark,
       onToggleTheme: widget.onToggleTheme,
-      onAuth: (username) {
-        setState(() {
-          _isLoggedIn = true;
-          _username = username;
-        });
-      },
+      onAuth: _handleAuth,
     );
   }
 }
