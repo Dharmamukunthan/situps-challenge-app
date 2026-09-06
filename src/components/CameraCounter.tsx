@@ -8,7 +8,6 @@ import {
   Trophy,
   Zap,
   Hand,
-  Minus,
 } from "lucide-react";
 
 interface CameraCounterProps {
@@ -54,18 +53,11 @@ export function CameraCounter({
     addManualRep();
   }, [addManualRep]);
 
-  const handleSubtractRep = useCallback(() => {
-    // Decrement by calling addManualRep logic in reverse
-    // Since we can't subtract from the hook directly, we track locally
-    if (repCount > 0) {
-      // Use a trick: we'll track a local offset
-    }
-  }, [repCount]);
-
+  // 0 = motion at bottom (lying), 100 = motion at top (sitting up)
   const angleColor =
-    currentAngle > 135
+    currentAngle > 65
       ? "text-red-400"
-      : currentAngle < 105
+      : currentAngle < 35
         ? "text-green-400"
         : "text-yellow-400";
 
@@ -80,6 +72,7 @@ export function CameraCounter({
               className="absolute inset-0 w-full h-full object-cover rounded-[var(--clay-radius)]"
               playsInline
               muted
+              autoPlay
             />
             <canvas
               ref={canvasRef}
@@ -123,11 +116,11 @@ export function CameraCounter({
               <div className="clay-pill bg-background/70 backdrop-blur-sm px-4 py-2 text-center">
                 <p className={`text-sm font-bold ${angleColor}`}>
                   {!modelLoaded
-                    ? "Loading AI model..."
-                    : currentAngle > 135
-                      ? "LYING — Sit up now!"
-                      : currentAngle < 105
-                        ? "SITTING — Lie back down!"
+                    ? "Loading camera..."
+                    : currentAngle > 65
+                      ? "SITTING — Lie back down!"
+                      : currentAngle < 35
+                        ? "LYING — Sit up now!"
                         : isInUpPhase
                           ? "Good! Now lie back down"
                           : "Get in position..."}

@@ -47,9 +47,10 @@ export function usePoseDetection(
     try {
       let stream: MediaStream;
       try {
+        // Front camera first (user's stated setup), fall back to any camera
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: "environment",
+            facingMode: "user",
             width: { ideal: 640 },
             height: { ideal: 480 },
           },
@@ -57,7 +58,7 @@ export function usePoseDetection(
       } catch {
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: "user",
+            facingMode: "environment",
             width: { ideal: 640 },
             height: { ideal: 480 },
           },

@@ -1,14 +1,6 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
-
-function generateCode(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
-  for (let i = 0; i < 6; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return code;
-}
+import { generateCode } from "./matchmaking";
 
 export const createBattle = mutation({
   args: {
@@ -42,17 +34,33 @@ export const joinBattle = mutation({
       .query("battles")
       .withIndex("by_code", (q) => q.eq("battleCode", code))
       .first();
-    if (!battle) throw new Error("Battle not found");
-    if (battle.status !== "waiting") throw new Error("Battle already started");
-    if (battle.creatorId === args.opponentId) throw new Error("Cannot join your own battle");
+
+    if (!battle) return { error: "Room not found. Check the code." };
+    if (battle.status === "finished")
+      return { error: "This battle already ended." };
+    if (battle.creatorId === args.opponentId)
+      return { error: "You created this room — waiting for your opponent." };
+    if (battle.opponentId && battle.opponentId !== args.opponentId)
+      return { error: "This room is already full." };
 
     const now = Date.now();
+    if (battle.startedAt && now - battle.startedAt < battle.duration * 1000) {
+      // Battle already running — this player joins mid-fight (e.g. rejoining
+      // after a refresh). Keep the SAME startedAt so the clock stays fair.
+      await ctx.db.patch(battle._id, {
+        opponentId: args.opponentId,
+        status: "active",
+      });
+      return { battleId: battle._id };
+    }
+    const startedAt = battle.startedAt ?? now + 5000; // shared 5s head start
+
     await ctx.db.patch(battle._id, {
       opponentId: args.opponentId,
       status: "active",
-      startedAt: now,
+      startedAt,
     });
-    return battle._id;
+    return { battleId: battle._id };
   },
 });
 
@@ -68,10 +76,11 @@ export const updateScore = mutation({
     if (battle.status === "finished") return;
 
     const now = Date.now();
-    // Small grace window so the losing-side's final sync isn't rejected at the buzzer
     const elapsed = battle.startedAt ? (now - battle.startedAt) / 1000 : 0;
 
-    if (elapsed >= battle.duration + 3) {
+    // Accept final syncs a few seconds past the buzzer so the losing side's
+    // last update isn't rejected; then auto-close.
+    if (battle.status === "active" && battle.startedAt && elapsed > battle.duration + 5) {
       await ctx.db.patch(args.battleId, {
         status: "finished",
         endedAt: now,
@@ -80,9 +89,13 @@ export const updateScore = mutation({
     }
 
     if (args.userId === battle.creatorId) {
-      await ctx.db.patch(args.battleId, { creatorScore: args.score });
+      if (args.score > battle.creatorScore) {
+        await ctx.db.patch(args.battleId, { creatorScore: args.score });
+      }
     } else if (args.userId === battle.opponentId) {
-      await ctx.db.patch(args.battleId, { opponentScore: args.score });
+      if (args.score > battle.opponentScore) {
+        await ctx.db.patch(args.battleId, { opponentScore: args.score });
+      }
     }
   },
 });

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 
-function validateName(username: string): string | null {
+export function validateName(username: string): string | null {
   const normalized = username.trim().toLowerCase();
   if (normalized.length < 2 || normalized.length > 16) {
     return "Username must be 2-16 characters";
@@ -50,6 +50,73 @@ export const getProfileByUsername = query({
   },
 });
 
+/** Assign a unique guest name like user1025, user1026, ... to an EXISTING user doc. */
+export const assignGuestName = mutation({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const userDoc = await ctx.db.get(args.userId as any);
+    if (!userDoc) throw new Error("Account not found");
+    if ((userDoc as any).username) return (userDoc as any).username as string;
+
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const n = Math.floor(Math.random() * 9000) + 1000; // 1000-9999
+      const candidate = `user${n}`;
+      const existing = await ctx.db
+        .query("users")
+        .withIndex("by_username", (q) => q.eq("username", candidate))
+        .first();
+      if (!existing) {
+        await ctx.db.patch(userDoc._id as any, {
+          username: candidate,
+          usernameLocked: false, // one-time rename still available
+        });
+        return candidate;
+      }
+    }
+    throw new Error("Could not allocate a guest username");
+  },
+});
+
+/** Allocate a unique guest name like user1025, user1026, ... (creates its own doc) */
+export const allocateGuestName = mutation({
+  args: {},
+  handler: async (ctx) => {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const n = Math.floor(Math.random() * 9000) + 1000; // 1000-9999
+      const candidate = `user${n}`;
+      const existing = await ctx.db
+        .query("users")
+        .withIndex("by_username", (q) => q.eq("username", candidate))
+        .first();
+      if (!existing) {
+        const userId = await ctx.db.insert("users", {
+          isAnonymous: true,
+          username: candidate,
+          usernameLocked: false, // hasn't used the one-time rename yet
+        });
+        return { userId, username: candidate };
+      }
+    }
+    // Extremely unlikely fallback: numeric sweep
+    for (let n = 1000; n <= 9999; n++) {
+      const candidate = `user${n}`;
+      const existing = await ctx.db
+        .query("users")
+        .withIndex("by_username", (q) => q.eq("username", candidate))
+        .first();
+      if (!existing) {
+        const userId = await ctx.db.insert("users", {
+          isAnonymous: true,
+          username: candidate,
+          usernameLocked: false,
+        });
+        return { userId, username: candidate };
+      }
+    }
+    throw new Error("Could not allocate a guest username");
+  },
+});
+
 // Guest username login (no email needed):
 //  - If the name already exists → return that account (same person logging back in).
 //  - Otherwise → create a new anonymous account with that name (one-time rename enforced).
@@ -68,9 +135,6 @@ export const registerUser = mutation({
       .first();
 
     if (existing) {
-      // Only guests are created through this path — if a signed-in user's name
-      // is entered here it still resolves to their account, which is fine for
-      // resuming a session on a new device.
       return {
         userId: existing._id,
         username: normalized,
@@ -143,9 +207,9 @@ export const registerUsername = mutation({
   },
 });
 
-// ---- Legacy functions kept so the web app keeps working ----
+// ---- Legacy function kept so the web app keeps working ----
 
-// Set username — tries auth context first, falls back to userId lookup
+// Set username — sets it on the given user document.
 export const setUsername = mutation({
   args: {
     userId: v.string(),
@@ -161,7 +225,6 @@ export const setUsername = mutation({
       throw new Error("Only letters, numbers, and underscores allowed");
     }
 
-    // Check if username is taken by someone else
     const existing = await ctx.db
       .query("users")
       .withIndex("by_username", (q) => q.eq("username", normalized))
@@ -170,23 +233,13 @@ export const setUsername = mutation({
       throw new Error("Username is already taken");
     }
 
-    // Try to find the user document by querying the users table
-    const allUsers = await ctx.db.query("users").collect();
-    const userDoc = allUsers.find((u) => u._id === args.userId);
-
-    if (userDoc) {
-      await ctx.db.patch(userDoc._id, { username: normalized });
-      return normalized;
+    const userDoc = await ctx.db.get(args.userId as any);
+    if (!userDoc) {
+      throw new Error("Could not find user account to save username");
     }
 
-    // Last resort: find any anonymous user without a username and set it
-    const anonUser = allUsers.find((u) => u.isAnonymous && !u.username);
-    if (anonUser) {
-      await ctx.db.patch(anonUser._id, { username: normalized });
-      return normalized;
-    }
-
-    throw new Error("Could not find user account to save username");
+    await ctx.db.patch(userDoc._id as any, { username: normalized });
+    return normalized;
   },
 });
 
