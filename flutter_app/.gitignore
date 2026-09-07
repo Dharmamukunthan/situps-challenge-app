@@ -1,0 +1,22 @@
+# Built resources
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.package_config.json
+.dart_tool/
+.flutter_export{sum}
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS / editor artifacts
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

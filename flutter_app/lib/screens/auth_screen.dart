@@ -84,7 +84,7 @@ class _AuthScreenState extends State<AuthScreen> {
   /// Suggests a free guest name like user1025 (keeps suggesting until one is free).
   Future<void> _suggestUsername() async {
     final rnd = Random();
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 12; i++) {
       final candidate = 'user${1000 + rnd.nextInt(9000)}';
       try {
         final value = await ConvexApi.call(
@@ -100,6 +100,28 @@ class _AuthScreenState extends State<AuthScreen> {
         }
       } catch (_) {
         // Backend unreachable — still prefill so the user can type manually
+        if (!mounted) return;
+        _usernameController.text = candidate;
+        return;
+      }
+    }
+
+    // If every candidate collided, spin again once.
+    for (int i = 0; i < 6; i++) {
+      final candidate = 'user${1000 + rnd.nextInt(9000)}';
+      try {
+        final value = await ConvexApi.call(
+            'query', 'username:checkUsername', {'username': candidate});
+        if (value is Map && value['valid'] == true) {
+          if (!mounted) return;
+          _usernameController.text = candidate;
+          setState(() {
+            _usernameAvailable = true;
+            _usernameMessage = null;
+          });
+          return;
+        }
+      } catch (_) {
         if (!mounted) return;
         _usernameController.text = candidate;
         return;
@@ -169,6 +191,7 @@ class _AuthScreenState extends State<AuthScreen> {
       await prefs.setString('situp-username', username);
       await prefs.setString('situp-user-id', userId);
       await prefs.setBool('situp-signed-in', false);
+      await prefs.setString('situp-auth-token', '');
 
       widget.onAuth(AuthResult(
         username: username,
@@ -229,20 +252,18 @@ class _AuthScreenState extends State<AuthScreen> {
       final token = result['token'] as String;
       final userId = result['userId'] as String;
 
-      // Resolve the account's username (signed-in users may not have claimed one yet)
+      // Signed-in users keep their existing on-disk username if they have one;
+      // otherwise we auto-claim a free user#### name they can rename anytime.
+      // Either way we clear any stale guest claim from this userId.
       final prefs = await SharedPreferences.getInstance();
-      String? username = await _fetchUsernameForUser(userId);
-
-      if (username == null || username.isEmpty) {
-        // First email sign-in: suggest a free guest-style name they can change anytime
-        username = await _suggestAndClaimForSignedIn(userId, token);
-      }
+      String username = await _resolveUsernameForSignedIn(userId, token);
 
       await prefs.setString('situp-username', username);
       await prefs.setString('situp-user-id', userId);
       await prefs.setString('situp-auth-token', token);
       await prefs.setBool('situp-signed-in', true);
 
+      if (!mounted) return;
       widget.onAuth(AuthResult(
         username: username,
         userId: userId,
@@ -257,24 +278,36 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  Future<String?> _fetchUsernameForUser(String userId) async {
+  /// Load the account's real username; if none exists yet, claim a free one.
+  /// Also clear any stale pending guest claim tied to this userId.
+  Future<String> _resolveUsernameForSignedIn(
+      String userId, String token) async {
     try {
-      final value =
-          await ConvexApi.call('query', 'username:getUsername', {
+      final value = await ConvexApi.call('query', 'username:getUsername', {
         'userId': userId,
       });
-      return value as String?;
-    } catch (_) {
-      return null;
-    }
+      if (value is String && value.isNotEmpty) {
+        // Existing account — just confirm we can still read it.
+        return value;
+      }
+    } catch (_) {}
+
+    // First email sign-in: claim a free user#### name they can rename anytime.
+    final username = await _suggestAndClaimForSignedIn(userId, token);
+    try {
+      await ConvexApi.call('mutation', 'username:clearPendingForUser', {
+        'userId': userId,
+      });
+    } catch (_) {}
+    return username;
   }
 
   /// For first-time email sign-ins, auto-claim a free user#### name
   /// (they can rename unlimited times later from the dashboard).
   Future<String> _suggestAndClaimForSignedIn(
-      String userId, String token) async {
+      String userId, String /*token*/) async {
     final rnd = Random();
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 8; i++) {
       final candidate = 'user${1000 + rnd.nextInt(9000)}';
       try {
         await ConvexApi.call(
@@ -300,62 +333,43 @@ class _AuthScreenState extends State<AuthScreen> {
       backgroundColor: _bg,
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 28),
           child: Column(
             children: [
-              const SizedBox(height: 28),
+              const SizedBox(height: 18),
 
-              // Theme toggle
+              // Logo — top, above the sign-in card
               Align(
-                alignment: Alignment.topRight,
-                child: GestureDetector(
-                  onTap: widget.onToggleTheme,
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: _card,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      widget.isDark ? Icons.light_mode : Icons.dark_mode,
-                      color: _accent,
-                      size: 22,
-                    ),
+                alignment: Alignment.topLeft,
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: _accent.withAlpha(30),
+                    shape: BoxShape.circle,
                   ),
+                  child: Icon(Icons.shield, color: _accent, size: 36),
                 ),
               ),
 
-              const SizedBox(height: 16),
-
-              // Logo
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: _accent.withAlpha(30),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(Icons.shield, color: _accent, size: 40),
-              ),
-
-              const SizedBox(height: 24),
+              const SizedBox(height: 18),
 
               Text(
                 "Situp Challenge",
                 style: TextStyle(
-                  fontSize: 28,
+                  fontSize: 26,
                   fontWeight: FontWeight.bold,
                   color: _text,
                 ),
               ),
 
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
 
               Text(
                 "Track your reps. Compete with friends.",
                 style: TextStyle(fontSize: 15, color: _subtext),
               ),
 
-              const SizedBox(height: 36),
+              const SizedBox(height: 32),
 
               // ====== SIGN IN CARD (top) ======
               Container(
@@ -686,5 +700,12 @@ class _AuthScreenState extends State<AuthScreen> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    // dispose() is inherited from the superclass; keep this method so the
+    // class can add cleanup later without breaking the signature.
+    super.dispose();
   }
 }

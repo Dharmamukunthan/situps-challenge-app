@@ -31,16 +31,27 @@ class ConvexApi {
       }
 
       final data = json.decode(response.body);
-      final status = data['status'];
-      if (status != null && status == 'error') {
-        throw ConvexApiException(_friendly(data['errorMessage']));
-      }
-      return data['result'] ?? data['value'];
+      return _unwrapResponse(data);
     } on ConvexApiException {
       rethrow;
     } catch (e) {
       throw ConvexApiException('Network error — check your connection');
     }
+  }
+
+  /// Unwraps a Convex HTTP response body the same way the web client does.
+  static dynamic _unwrapResponse(Map<String, dynamic> data) {
+    // Standard Convex API response shape.
+    final status = data['status'];
+    if (status == 'error') {
+      throw ConvexApiException(_friendly(data['errorMessage']));
+    }
+    if (data['result'] != null) return data['result'];
+    if (data['value'] != null) return data['value'];
+    if (data['errorMessage'] != null && data['errorMessage'].toString().isNotEmpty) {
+      throw ConvexApiException(_friendly(data['errorMessage']));
+    }
+    return null;
   }
 
   static String _friendly(String? msg) {
@@ -54,10 +65,11 @@ class ConvexApi {
     if (msg.contains('Battle not found')) return 'Room not found — check the code';
     if (msg.contains('already started')) return 'That room already started';
     if (msg.contains('own battle')) return "You can't join your own room";
-    // Backend errors embed the message inside a serialized error object.
+    // Try to extract the backend's human message from serialized error shapes.
     final match = RegExp(r'"message":"([^"]+)"').firstMatch(msg);
-    if (match != null) return match.group(1)!;
-    if (msg.length > 90) return msg.substring(0, 90);
+    final friendly = match?.group(1);
+    if (friendly != null && friendly.isNotEmpty) return friendly;
+    if (msg.length > 120) return msg.substring(0, 120);
     return msg;
   }
 
@@ -81,8 +93,8 @@ class ConvexApi {
         .timeout(const Duration(seconds: 15));
 
     final data = json.decode(response.body);
-    if (data['tokens'] == null && data['errorMessage'] != null) {
-      throw ConvexApiException(_friendly(data['errorMessage'].toString()));
+    if (data['status'] == 'error' || (data['errorMessage'] != null && data['errorMessage'].toString().isNotEmpty)) {
+      throw ConvexApiException(_friendly(data['errorMessage']?.toString()));
     }
   }
 
@@ -109,7 +121,7 @@ class ConvexApi {
 
     final data = json.decode(response.body);
     final tokens = data['tokens'];
-    if (tokens == null) {
+    if (tokens == null || tokens['token'] == null) {
       throw ConvexApiException(
           'Wrong or expired code — check your email and try again');
     }

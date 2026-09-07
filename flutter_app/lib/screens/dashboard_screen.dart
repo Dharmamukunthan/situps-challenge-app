@@ -389,10 +389,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
         'duration': _selectedDuration,
       });
 
+
       if (result != null && result is String) {
         // Instantly paired with a waiting opponent
         _searchClockTimer?.cancel();
         await _onRandomMatchFound(result);
+        return;
+      }
+
+      // result came back as a map/table (rare) — treat as a match id too
+      if (result != null && result is Map && result['battleId'] != null) {
+        _searchClockTimer?.cancel();
+        await _onRandomMatchFound(result['battleId'] as String);
         return;
       }
 
@@ -403,6 +411,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (mounted) setState(() => _battlePhase = BattlePhase.lobby);
       _showSnackBar(e.toString().replaceFirst('ConvexApiException: ', ''));
     }
+  }
+
+  /// Recreate the queue entry if the server purged it mid-search.
+  void _ensureMatchmakingEntry() {
+    if (_battlePhase != BattlePhase.searching || !mounted) return;
+    try {
+      ConvexApi.call('mutation', 'matchmaking:findMatch', {
+        'userId': widget.userId,
+        'username': widget.username,
+        'duration': _selectedDuration,
+      }).then((result) {
+        if (!mounted || _battlePhase != BattlePhase.searching) return;
+        if (result is String) {
+          _searchClockTimer?.cancel();
+          _onRandomMatchFound(result);
+        } else if (result is Map && result['battleId'] != null) {
+          _searchClockTimer?.cancel();
+          _onRandomMatchFound(result['battleId'] as String);
+        }
+      }).catchError((_) {});
+    } catch (_) {}
   }
 
   void _pollForMatch() {
@@ -420,10 +449,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
           timer.cancel();
           _searchClockTimer?.cancel();
           await _onRandomMatchFound(result['battleId'] as String);
+          return;
         }
       } catch (_) {
         // transient network error — keep searching
       }
+
+      // Server may have dropped our waiting entry during a previous match.
+      // Recreate it so the next opponent can still find us. Keep this outside
+      // the main try/catch so a 4xx here still lets the poll continue.
+      _ensureMatchmakingEntry();
     });
   }
 
@@ -460,6 +495,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (mounted) setState(() => _battlePhase = BattlePhase.lobby);
   }
 
+
   // =====================================================================
   // PRIVATE ROOM — create with code + QR, wait unlimited for a friend
   // =====================================================================
@@ -481,6 +517,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     try {
       final result = await ConvexApi.call('mutation', 'battles:createBattle', {
+        'creatorId': widget.userId,
+        'duration': _selectedDuration,
+        'username': widget.username,
+      });
         'creatorId': widget.userId,
         'duration': _selectedDuration,
       });
@@ -682,8 +722,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
       }
 
-      // Push my score
-      await ConvexApi.call('mutation', 'battles:updateScore', {
+
         'battleId': _battleId,
         'userId': widget.userId,
         'score': _battleMyReps,
@@ -803,7 +842,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildHeader() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 50, 20, 16),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 14),
       decoration: BoxDecoration(
         color: _card,
         borderRadius: const BorderRadius.only(
@@ -820,6 +859,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       child: Row(
         children: [
+          // Logo — top left, always visible
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
@@ -828,7 +868,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             child: Icon(Icons.shield, color: _accent, size: 22),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
+          // App title — always visible, top of header
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -836,11 +877,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Text(
                   "Situp Challenge",
                   style: TextStyle(
-                    fontSize: 18,
+                    fontSize: 17,
                     fontWeight: FontWeight.bold,
                     color: _text,
                   ),
                 ),
+                const SizedBox(height: 2),
                 GestureDetector(
                   onTap: _showRenameDialog,
                   child: Row(
@@ -849,18 +891,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         child: Text(
                           widget.username,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 13, color: _subtext),
+                          style: TextStyle(fontSize: 12, color: _subtext),
                         ),
                       ),
                       const SizedBox(width: 6),
-                      Icon(Icons.edit, size: 13, color: _subtext),
+                      Icon(Icons.edit, size: 12, color: _subtext),
                     ],
                   ),
                 ),
               ],
             ),
           ),
-          // Theme toggle
+          // Theme toggle — always visible, top right
           GestureDetector(
             onTap: widget.onToggleTheme,
             child: Container(
@@ -877,7 +919,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           ),
           const SizedBox(width: 8),
-          // Sign out
+          // Sign out — always visible, top right
           GestureDetector(
             onTap: widget.onSignOut,
             child: Container(
@@ -1031,6 +1073,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  /// Shared debouncer so repeated taps don't issue concurrent requests.
+  DateTime? _lastTapAt;
+  bool get _canTap => _lastTapAt == null ||
+      DateTime.now().difference(_lastTapAt!).inMilliseconds > 400;
+  void _markTap() => _lastTapAt = DateTime.now();
+
   Widget _buildLobby() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -1173,10 +1221,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 const SizedBox(height: 12),
                 _buildDurationRow(),
-                const SizedBox(height: 20),
-                // Create Room button
+                const SizedBox(height: 20),                  // Create Room button
                 GestureDetector(
-                  onTap: _createPrivateRoom,
+                  onTap: _canTap ? () { _markTap(); _createPrivateRoom(); } : null,
                   child: Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(16),
@@ -1205,6 +1252,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 const SizedBox(height: 20),
                 // Join with code
+
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -1255,7 +1303,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           const SizedBox(width: 10),
                           GestureDetector(
                             onTap:
-                                _isStartingBattle ? null : _joinPrivateRoom,
+                                _isStartingBattle || !_canTap
+                                    ? null
+                                    : () {
+                                        _markTap();
+                                        _joinPrivateRoom();
+                                      },
                             child: Container(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 22, vertical: 14),
@@ -1370,7 +1423,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 20),
             GestureDetector(
-              onTap: _cancelSearch,
+              onTap: _canTap ? () { _markTap(); _cancelSearch(); } : null,
               child: Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
@@ -1504,7 +1557,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 20),
             GestureDetector(
-              onTap: _leaveBattleSetup,
+              onTap: _canTap ? () { _markTap(); _leaveBattleSetup(); } : null,
               child: Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 32, vertical: 14),

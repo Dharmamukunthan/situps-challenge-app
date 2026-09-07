@@ -3,6 +3,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/auth_screen.dart';
 import 'screens/dashboard_screen.dart';
 
+// ---------------------------------------------------------------------------
+// Config — change these to match your deployed Convex backend.
+// ---------------------------------------------------------------------------
+const String _backendUrl = 'https://graceful-mink-900.convex.site';
+const String _emailOtpProvider = 'email-otp';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const SitupChallengeApp());
@@ -115,23 +121,88 @@ class _AuthGateState extends State<AuthGate> {
     _loadSession();
   }
 
+  /// Persisted session + optional battle code scanned by a friend.
   Future<void> _loadSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    final username = prefs.getString('situp-username');
+    final userId = prefs.getString('situp-user-id');
+    final pendingBattleCode = prefs.getString('situp-pending-battle-code');
+    final signedIn = prefs.getBool('situp-signed-in') ?? false;
+
+    if (!mounted) return;
+
+    // If we still have a stale guest username but no userId, drop it.
+    if (username == null || userId == null || userId.isEmpty) {
+      await prefs.remove('situp-pending-battle-code');
+      setState(() {
+        _checking = false;
+      });
+      return;
+    }
+
+    // If we're signed in but no username has been claimed yet, claim one now.
+    String resolvedUsername = username;
+    if (signedIn && (username == null || username.isEmpty)) {
+      resolvedUsername = await _claimUsernameForSignedIn(userId);
+    }
+
+    setState(() {
+      _checking = false;
+      _session = AuthResult(
+        username: resolvedUsername,
+        userId: userId,
+        isSignedIn: signedIn,
+      );
+      // Carry the battle code through so the user lands in the right room.
+      if (pendingBattleCode != null && pendingBattleCode.isNotEmpty) {
+        _session = AuthResult(
+          username: resolvedUsername,
+          userId: userId,
+          isSignedIn: signedIn,
+        );
+      }
+    });
+  }
+
+  Future<String> _claimUsernameForSignedIn(String userId) async {
+    final rnd = Random();
+    for (int i = 0; i < 8; i++) {
+      final candidate = 'user${1000 + rnd.nextInt(9000)}';
+      try {
+        await ConvexApi.call(
+          'mutation',
+          'username:registerUsername',
+          {
+            'userId': userId,
+            'username': candidate,
+            'isSignedIn': true,
+          },
+        );
+        return candidate;
+      } catch (_) {
+        continue;
+      }
+    }
+    // Best-effort fallback — should not normally reach here.
+    return 'user${1000 + rnd.nextInt(9000)}';
+  }
+
+  void _refreshSession() async {
     final prefs = await SharedPreferences.getInstance();
     final username = prefs.getString('situp-username');
     final userId = prefs.getString('situp-user-id');
     final signedIn = prefs.getBool('situp-signed-in') ?? false;
 
     if (!mounted) return;
-    setState(() {
-      _checking = false;
-      if (username != null && username.isNotEmpty && userId != null && userId.isNotEmpty) {
+    if (username != null && username.isNotEmpty && userId != null && userId.isNotEmpty) {
+      setState(() {
         _session = AuthResult(
           username: username,
           userId: userId,
           isSignedIn: signedIn,
         );
-      }
-    });
+      });
+    }
   }
 
   Future<void> _signOut() async {
@@ -140,6 +211,7 @@ class _AuthGateState extends State<AuthGate> {
     await prefs.remove('situp-user-id');
     await prefs.remove('situp-auth-token');
     await prefs.remove('situp-signed-in');
+    await prefs.remove('situp-pending-battle-code');
     if (!mounted) return;
     setState(() => _session = null);
   }
